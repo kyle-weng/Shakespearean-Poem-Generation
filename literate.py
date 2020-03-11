@@ -1,6 +1,15 @@
 """some parsing and processing functions"""
 
-def read(fname, bad=",.:;()?!"):
+def futz(wdict, word):
+    """attempt to match words to ones in dictionary"""
+    if word in wdict:
+        return word
+    # try removing quotes
+    unquoted = word.strip("'")
+    if unquoted in wdict:
+        return unquoted
+
+def read(fname, wdict=None, bad=",.:;()?!"):
     """Returns list of sonnets, and set of words in a file.
     
     Each sonnet is a list of lines; each line is a list of words
@@ -17,6 +26,8 @@ def read(fname, bad=",.:;()?!"):
         if (len(l) == 1): # assume single word line delimits new sonnet
             data.append([])
             continue
+        if (wdict):
+            l = [futz(wdict, w) for w in l]
         # append to last sonnet in list
         data[-1].append(l)
         words.update(l)
@@ -26,7 +37,7 @@ def read(fname, bad=",.:;()?!"):
 def recite(sonnet):
     """Assemble sonnet back into string and print it"""
     print("\n".join([" ".join(l) for l in sonnet]))
-    
+
 def syldict(fname):
     """Reads syllable dictionary,
     and returns a dictionary mapping words
