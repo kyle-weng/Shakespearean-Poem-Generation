@@ -215,7 +215,7 @@ def unsupervised_learning(hmm, X, N_iters):
     start = time.time()
     # epochs
     for e in range(N_iters):
-        if ((e+1) % 50 == 0):
+        if ((e+1) % (int(N_iters/10)) == 0):
             print(e, " ", end="", flush=True)
 
         A_num = np.zeros((hmm.L,hmm.L))
