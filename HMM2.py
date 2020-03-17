@@ -10,6 +10,12 @@ def init(A, O):
     A, O = np.array(A), np.array(O)
     L, D = O.shape
     return Hmm(np.ones(L)/L, A, O, D, L)
+def init_rand(L, D):
+    A = np.random.rand(L,L)
+    A /= A.sum(axis=1).reshape((-1,1))
+    O = np.random.rand(L,D)
+    O /= O.sum(axis=1).reshape((-1,1))
+    return init(A, O)
 
 def viterbi(hmm, x):
     '''
@@ -63,7 +69,7 @@ def viterbi(hmm, x):
 
 
 
-def forward(hmm, x, normalize=False):
+def forward(hmm, x, normalize=False, log=False):
     '''
     Uses the forward algorithm to calculate the alpha probability
     vectors corresponding to a given input sequence.
@@ -93,19 +99,28 @@ def forward(hmm, x, normalize=False):
     A = hmm.A
 
     alphas = -np.ones((M,hmm.L))
-    alphas[0] = np.array(hmm.A0) * O[:,x[0]]
-    if (normalize):
-        alphas[0] /= np.sum(alphas[0])
+    facs = np.zeros(M) # log of multiplicative factor for normalization
+    alphas[0] = hmm.A0 * O[:,x[0]]
+    norm = np.sum(alphas[0])
+    alphas[0] /= norm
+    facs[0] = np.log(norm)
 
     # for every element of x
     for i in range(1,M):
         # for every possible next state
         for z in range(hmm.L):
             alphas[i,z] = O[z,x[i]] * np.sum(alphas[i-1] * A[:,z])
-        if (normalize):
-            alphas[i] /= np.sum(alphas[i])
+        norm = np.sum(alphas[i])
+        alphas[i] /= norm
+        facs[i] = np.log(norm)
 
-    return alphas
+    if (log):
+        if (normalize):
+            return np.log(alphas)
+        return np.log(alphas) + facs.reshape((-1,1))
+    if (normalize):
+        return alphas
+    return alphas * np.exp(facs).reshape((-1,1))
 
 
 def backward(hmm, x, normalize=False):
@@ -194,12 +209,10 @@ def supervised_learning(hmm, X, Y):
 
     return hmm._replace(A=(A_num / A_den), O=(O_num / O_den))
 
-
-def unsupervised_learning(hmm, X, N_iters):
+def unsupervised_step(hmm, X):
     '''
-    Trains the HMM using the Baum-Welch algorithm on an unlabeled
-    datset X. Note that this method does not return anything, but
-    instead updates the attributes of the HMM object.
+    Single step of the Baum-Welch algorithm on an unlabeled
+    datset X.
 
     Arguments:
         X:          A dataset consisting of input sequences in the form
@@ -208,49 +221,36 @@ def unsupervised_learning(hmm, X, N_iters):
 
         N_iters:    The number of iterations to train on.
     '''
-    A = np.array(hmm.A)
-    O = np.array(hmm.O)
+    A_num = np.zeros((hmm.L,hmm.L))
+    A_den = np.zeros(hmm.L)
+    O_num = np.zeros((hmm.L,hmm.D))
+    O_den = np.zeros(hmm.L)
 
-    print("Training", N_iters, "iters")
-    start = time.time()
-    # epochs
-    for e in range(N_iters):
-        if ((e+1) % (int(N_iters/10)) == 0):
-            print(e, " ", end="", flush=True)
+    # for every sentence in training data
+    for x in X:
+        alphas = forward(hmm, x, True)
+        betas = backward(hmm, x, True)
 
-        A_num = np.zeros((hmm.L,hmm.L))
-        A_den = np.zeros(hmm.L)
-        O_num = np.zeros((hmm.L,hmm.D))
-        O_den = np.zeros(hmm.L)
+        # numerators
+        Pa = alphas * betas
+        Pa /= Pa.sum(axis=1).reshape((-1,1))
 
-        # for every sentence in training data
-        for x in X:
-            alphas = forward(hmm, x, True)
-            betas = backward(hmm, x, True)
+        # denominators
+        den = Pa[:-1].sum(axis=0)
+        A_den += den # A stops before end of sentence
+        O_den += den + Pa[-1] # O goes to end of sentence
+        for i in range(len(x)-1):
+            # probability of state transition
+            Pab = np.outer(alphas[i], betas[i+1]) * hmm.A * hmm.O[:,x[i+1]]
+            A_num += Pab / np.sum(Pab)
+            # probability of observation
+            O_num[:,x[i]] += Pa[i]
+        O_num[:,x[-1]] += Pa[-1]
 
-            # numerators
-            Pa = alphas * betas
-            Pa /= Pa.sum(axis=1).reshape((-1,1))
-
-            # denominators
-            den = Pa[:-1].sum(axis=0)
-            A_den += den # A stops before end of sentence
-            O_den += den + Pa[-1] # O goes to end of sentence
-            for i in range(len(x)-1):
-                # probability of state transition
-                Pab = np.outer(alphas[i], betas[i+1]) * A * O[:,x[i+1]]
-                A_num += Pab / np.sum(Pab)
-                # probability of observation
-                O_num[:,x[i]] += Pa[i]
-            O_num[:,x[-1]] += Pa[-1]
-
-        # update
-        A = A_num / A_den.reshape((-1,1))
+    return hmm._replace(
+        A = A_num / A_den.reshape((-1,1)),
         O = O_num / O_den.reshape((-1,1))
-        hmm = hmm._replace(A=A, O=O)
-
-    print("\nelapsed", time.time() - start)
-    return hmm
+    )
 
 
 def generate_emission(hmm, M):
@@ -282,7 +282,7 @@ def generate_emission(hmm, M):
     return emission, states
 
 
-def probability_alphas(hmm, x):
+def probability_alphas(hmm, x, log=False):
     '''
     Finds the maximum probability of a given input sequence using
     the forward algorithm.
@@ -296,17 +296,24 @@ def probability_alphas(hmm, x):
     '''
 
     # Calculate alpha vectors.
-    alphas = forward(hmm, x)
+    alphas = forward(hmm, x, normalize=False, log=log)
 
     # alpha_j(M) gives the probability that the state sequence ends
     # in j. Summing this value over all possible states j gives the
     # total probability of x paired with any state sequence, i.e.
     # the probability of x.
-    prob = sum(alphas[-1])
-    return prob
+    if (log):
+        m = np.max(alphas[-1])
+        return np.log(np.sum(np.exp(alphas[-1]-m))) + m
+    return sum(alphas[-1])
+
+def score_ll(hmm, X):
+    score = 0
+    for x in X:
+        score += probability_alphas(hmm, x, log=True) / len(x) / len(X)
+    return score
 
 
-import random
 def supervised(X, Y):
     '''
     Helper function to train a supervised HMM. The function determines the
@@ -338,27 +345,15 @@ def supervised(X, Y):
     L = len(states)
     D = len(observations)
 
-    # Randomly initialize and normalize matrix A.
-    A = [[random.random() for i in range(L)] for j in range(L)]
+    A = [[0 for i in range(L)] for j in range(L)]
 
-    for i in range(len(A)):
-        norm = sum(A[i])
-        for j in range(len(A[i])):
-            A[i][j] /= norm
-    
-    # Randomly initialize and normalize matrix O.
-    O = [[random.random() for i in range(D)] for j in range(L)]
-
-    for i in range(len(O)):
-        norm = sum(O[i])
-        for j in range(len(O[i])):
-            O[i][j] /= norm
+    O = [[0 for i in range(D)] for j in range(L)]
 
     # Train an HMM with labeled data.
     HMM = init(A, O)
     return supervised_learning(HMM, X, Y)
 
-def unsupervised(X, n_states, N_iters):
+def unsupervised(X, n_states=10, N_iters=50, hmm=None):
     '''
     Helper function to train an unsupervised HMM. The function determines the
     number of unique observations in the given data, initializes
@@ -375,31 +370,29 @@ def unsupervised(X, n_states, N_iters):
         N_iters:    The number of iterations to train on.
     '''
 
-    # Make a set of observations.
-    observations = set()
-    for x in X:
-        observations |= set(x)
+    if (hmm is None):
+        # Make a set of observations.
+        observations = set()
+        for x in X:
+            observations |= set(x)
+
+        # Compute L and D.
+        L = n_states
+        D = len(observations)
+
+        hmm = init_rand(L, D)
+    scores = np.zeros(N_iters+1)
     
-    # Compute L and D.
-    L = n_states
-    D = len(observations)
+    print("Training", N_iters, "iters")
+    start = time.time()
+    # epochs
+    for e in range(N_iters):
+        if ((e+1) % max(1,int(N_iters/10)) == 0):
+            print(e, " ", end="", flush=True)
 
-    # Randomly initialize and normalize matrix A.
-    A = [[random.random() for i in range(L)] for j in range(L)]
+        scores[e] = score_ll(hmm, X)
+        hmm = unsupervised_step(hmm, X)
+    scores[-1] = score_ll(hmm, X)
 
-    for i in range(len(A)):
-        norm = sum(A[i])
-        for j in range(len(A[i])):
-            A[i][j] /= norm
-    
-    # Randomly initialize and normalize matrix O.
-    O = [[random.random() for i in range(D)] for j in range(L)]
-
-    for i in range(len(O)):
-        norm = sum(O[i])
-        for j in range(len(O[i])):
-            O[i][j] /= norm
-
-    # Train an HMM with unlabeled data.
-    HMM = init(A, O)
-    return unsupervised_learning(HMM, X, N_iters)
+    print("\nelapsed", time.time() - start)
+    return hmm, scores
