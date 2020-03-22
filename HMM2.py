@@ -10,6 +10,7 @@ def init(A, O):
     A, O = np.array(A), np.array(O)
     L, D = O.shape
     return Hmm(np.ones(L)/L, A, O, D, L)
+
 def init_rand(L, D):
     A = np.random.rand(L,L)
     A /= A.sum(axis=1).reshape((-1,1))
@@ -59,10 +60,10 @@ def viterbi(hmm, x):
             steps[i,j] = best
 
     # backtrack to recover sequence
-    seq = ""
+    seq = np.zeros(M)
     state = np.argmax(probs[-1])
     for i in range(M):
-        seq = str(int(state)) + seq
+        seq[-1-i] = state
         state = steps[-i-1,int(state)]
 
     return seq
@@ -100,6 +101,7 @@ def forward(hmm, x, normalize=False, log=False):
 
     alphas = -np.ones((M,hmm.L))
     facs = np.zeros(M) # log of multiplicative factor for normalization
+
     alphas[0] = hmm.A0 * O[:,x[0]]
     norm = np.sum(alphas[0])
     alphas[0] /= norm
@@ -112,7 +114,7 @@ def forward(hmm, x, normalize=False, log=False):
             alphas[i,z] = O[z,x[i]] * np.sum(alphas[i-1] * A[:,z])
         norm = np.sum(alphas[i])
         alphas[i] /= norm
-        facs[i] = np.log(norm)
+        facs[i] = facs[i-1]+np.log(norm)
 
     if (log):
         if (normalize):
@@ -171,8 +173,7 @@ def supervised_learning(hmm, X, Y):
     '''
     Trains the HMM using the Maximum Likelihood closed form solutions
     for the transition and observation matrices on a labeled
-    datset (X, Y). Note that this method does not return anything, but
-    instead updates the attributes of the HMM object.
+    datset (X, Y).
 
     Arguments:
         X:          A dataset consisting of input sequences in the form
@@ -252,6 +253,16 @@ def unsupervised_step(hmm, X):
         O = O_num / O_den.reshape((-1,1))
     )
 
+def unsupervised_starts(hmm, X):
+    """Weight starting state probabilities according to
+    probabilities of observing initial observation on each sequence...
+    Does this make theoretical sense?
+    """
+    A0 = np.zeros(hmm.L)
+    for x in X:
+        likes = hmm.O[:,x[0]]
+        A0 += likes / likes.sum() / len(X)
+    return hmm._replace(A0=A0)
 
 def generate_emission(hmm, M):
     '''
@@ -355,10 +366,11 @@ def supervised(X, Y):
 
 def unsupervised(X, n_states=10, N_iters=50, hmm=None):
     '''
-    Helper function to train an unsupervised HMM. The function determines the
+    Helper function to train an unsupervised HMM by running N_iters
+    of unsupervised_step.
+    If hmm is not provided, the function determines the
     number of unique observations in the given data, initializes
-    the transition and observation matrices, creates the HMM, and then runs
-    the training function for unsupervised learing.
+    the transition and observation matrices, and creates the HMM.
 
     Arguments:
         X:          A dataset consisting of input sequences in the form
@@ -368,6 +380,9 @@ def unsupervised(X, n_states=10, N_iters=50, hmm=None):
         n_states:   Number of hidden states to use in training.
         
         N_iters:    The number of iterations to train on.
+        
+        hmm:        Hmm, assumed to have correct number of states/observations.
+                    Useful for continuing training
     '''
 
     if (hmm is None):

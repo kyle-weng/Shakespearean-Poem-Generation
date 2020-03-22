@@ -1,5 +1,7 @@
 """some parsing and processing functions"""
 
+from collections import defaultdict
+
 def futz(wdict, word):
     """attempt to match words to ones in dictionary"""
     if word in wdict:
@@ -54,3 +56,18 @@ def syldict(fname):
     for l in lines:
         d[l[0]] = [int(c) for c in l[1:]]
     return d
+
+def get_rhymes(sonnets):
+    """Returns dictionary mapping words to list of rhyming words,
+    based on their use in sonnets"""
+    rhymes = defaultdict(set)
+    # lines which should rhyme
+    pairs = [(0,2),(1,3),(4,6),(5,7),(8,10),(9,11),(12,13)]
+    for s in sonnets:
+        if (len(s) != 14):
+            continue
+        for i,j in pairs:
+            a,b = s[i][-1], s[j][-1]
+            rhymes[a].add(b)
+            rhymes[b].add(a)
+    return rhymes
